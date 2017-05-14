@@ -4,6 +4,14 @@ Ponygen generates classes from an `information_schema` database and a given sche
 
 It does not support what Pony does not support.
 
+## Preliminary notes
+
+Basically this is a hack, a helper for developers and by no means code to be exposed in production.
+
+Untested, just the minimal set of what I need. One hour of work or so.
+
+Published to help other people trying to do the same thing.
+
 ## Nice extras
 
 To automatically register an extension class to your PonyORM classes, use
