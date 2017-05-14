@@ -3,46 +3,74 @@
 
 Takes all times from the provided database
 
-Usage: ponygen DSN [SCHEMA_NAME] [--outdir=<outdir>] [--engine=<engine>]
+Usage: ponygen DSN [SCHEMA_NAME] [--outdir=<outdir>] [--engine=<engine>] [--remove_prefix=<prefix>]
 
 Arguments:
   DSN                The DSN to connect to, as eaten by the underlying DB-API compatible engine
   SCHEMA_NAME        Schema to generate tables for. [default: galette] 
 
 Options:
-  --engine=<engine>  DB-API compatible module to load [default: mysql]
-  --outdir=<outdir>  Output directory [default: /tmp]
+  --engine=<engine>         DB-API compatible module to load [default: mysql]
+  --outdir=<outdir>         Output directory [default: /tmp]
+  --remove_prefix=<prefix>  Prefix to remove from the table names.
+
 """
 
 from importlib import import_module
 from itertools import groupby
 import dsnparse
 
+
+helpers_template = """
+class classproperty(object):
+
+    def __init__(self, fget):
+        self.fget = fget
+
+    def __get__(self, owner_self, owner_cls):
+        return self.fget(owner_cls)
+"""
+
 base_template = """
 from pony import orm
 db = orm.Database()
+setattr(db, 'tables_prefix', '')
 import logging
 
 logger = logging.getLogger(__name__)
 
-def init_mappings(prefix='', **conn_args):
+class ExtraClassFactory(object):  
+  xtra = {{}}
+  @classmethod
+  def register(cls, class_name, xtra_cls):
+    cls.xtra[class_name] = xtra_cls
+ 
+  @classmethod
+  def get_extra_class(cls, class_name):
+    return cls.xtra.get(class_name, object)
+
+
+def init_mappings(prefix='', engine='mysql', **conn_args):
 {importList}
-  db.bind(**conn_args)
-  db.generate_mappings()
+  db.tables_prefix = prefix
+  db.bind(engine, **conn_args)
+  db.generate_mapping()
   logger.debug("done running init_mappings")
 
-__all__ = ['db', 'init_mappings'] 
+__all__ = ['db', 'init_mappings', 'ExtraClassFactory'] 
 """
 
 
 class_template = """
 from pony import orm
 from datetime import datetime, date, time
-from .ponygen import db
+from .ponygen import db, ExtraClassFactory
+from .helpers import classproperty
 
 
-class {className}(db.Entity):
-  _table_ = "{tableName}"
+class {className}(db.Entity, ExtraClassFactory.get_extra_class("{className}")):
+  _table_ = db.tables_prefix + "{tableName}"
+
 {fields}
 {pk}
 
@@ -72,7 +100,7 @@ def establish_conn(engine, dsn):
     conn = db_module.connect(**argsdict)
   return conn
 
-def ponygen(dsn="mysql://root@localhost/information_schema", engine="mysql", schema_name="galette", outdir="/tmp", kill_prefix="test_"):
+def ponygen(dsn="mysql://root@localhost/information_schema", engine="mysql", schema_name="galette", outdir="/tmp", remove_prefix=""):
   q = """
   SELECT TABLE_NAME as tbl, IS_NULLABLE as optional, COLUMN_NAME as col, COLUMN_TYPE as typ, COLUMN_KEY='PRI' as primarii, COLUMN_KEY='uni' as uniquei, COLUMN_KEY='mul' as non_unique, DATA_TYPE as basetype, CHARACTER_MAXIMUM_LENGTH as maxlen FROM
   INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s
@@ -86,13 +114,16 @@ def ponygen(dsn="mysql://root@localhost/information_schema", engine="mysql", sch
   fields = list()
   mappings = list()
   for tbl_name, tbl_it in groupby(lines, key=lambda x: x[0]):
+    table_lst = list(tbl_it)
     fields = []
     pkFields = []
-    # fill in template
-    if kill_prefix and tbl_name.find(kill_prefix) == 0:
-      tbl_name = tbl_name[len(kill_prefix):]
-    table_lst = list(tbl_it)
     pk_keys = [a[2] for a in table_lst if a[4]]
+    if not pk_keys:
+      print("***TABLE NOT SUPPORTED %s -- NO PRIMARY KEY ***" % (tbl_name,))
+      continue
+    # fill in template
+    if remove_prefix and tbl_name.find(remove_prefix) == 0:
+      tbl_name = tbl_name[len(remove_prefix):]
     for (table_name, optional, col, typ, primary, unique, multiple, basetype, maxlen) in table_lst:
       extraArgs = []
       if primary and len(pk_keys) > 1:
@@ -132,10 +163,11 @@ def ponygen(dsn="mysql://root@localhost/information_schema", engine="mysql", sch
     with open('/'.join([outdir, '.'.join([tbl_name, 'py'])]), 'w') as f:
       f.write(clst)
     mappings.append("  from .{tblName} import {className}; {className}._table_ = ''.join([prefix, {className}._table_])".format(tblName=tbl_name, className=className))
-    print(clst)
   conn.close()
   with open('/'.join([outdir, '.'.join(['ponygen', 'py'])]), 'w') as f:
     f.write(base_template.format(importList="\n".join(mappings)))
+  with open('/'.join([outdir, '.'.join(['helpers', 'py'])]), 'w') as f:
+    f.write(helpers_template)
 
 if __name__ == '__main__':
   import docopt
