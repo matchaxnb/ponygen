@@ -80,7 +80,8 @@ primaryKeyTpl = """
   orm.PrimaryKey({pkFields})
 """
 field_template = """
-  {fieldName} = {typeSelector}({baseType}{extraArgs})"""
+    {comment}
+    {fieldName} = {typeSelector}({baseType}{extraArgs})"""
 
 
 def establish_conn(engine, dsn):
@@ -102,7 +103,7 @@ def establish_conn(engine, dsn):
 
 def ponygen(dsn="mysql://root@localhost/information_schema", engine="mysql", schema_name="galette", outdir="/tmp", remove_prefix=""):
   q = """
-  SELECT TABLE_NAME as tbl, IS_NULLABLE as optional, COLUMN_NAME as col, COLUMN_TYPE as typ, COLUMN_KEY='PRI' as primarii, COLUMN_KEY='uni' as uniquei, COLUMN_KEY='mul' as non_unique, DATA_TYPE as basetype, CHARACTER_MAXIMUM_LENGTH as maxlen FROM
+  SELECT TABLE_NAME as tbl, IS_NULLABLE as optional, COLUMN_NAME as col, COLUMN_TYPE as typ, COLUMN_KEY='PRI' as primarii, COLUMN_KEY='uni' as uniquei, COLUMN_KEY='mul' as non_unique, DATA_TYPE as basetype, CHARACTER_MAXIMUM_LENGTH as maxlen, COLUMN_COMMENT as col_comment FROM
   INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s
   ORDER BY tbl, ORDINAL_POSITION
   """
@@ -124,7 +125,7 @@ def ponygen(dsn="mysql://root@localhost/information_schema", engine="mysql", sch
     # fill in template
     if remove_prefix and tbl_name.find(remove_prefix) == 0:
       tbl_name = tbl_name[len(remove_prefix):]
-    for (table_name, optional, col, typ, primary, unique, multiple, basetype, maxlen) in table_lst:
+    for (table_name, optional, col, typ, primary, unique, multiple, basetype, maxlen, col_comment) in table_lst:
       extraArgs = []
       if primary and len(pk_keys) > 1:
         typeSelector = 'orm.Required'
@@ -153,7 +154,7 @@ def ponygen(dsn="mysql://root@localhost/information_schema", engine="mysql", sch
         baseType = 'orm.Decimal'
       elif 'int' in basetype:
         baseType = 'int'
-      fields.append(field_template.format(fieldName=col, typeSelector=typeSelector, baseType=baseType, extraArgs=', '.join(extraArgs)))
+      fields.append(field_template.format(fieldName=col, typeSelector=typeSelector, baseType=baseType, extraArgs=', '.join(extraArgs), comment= '# ' + col_comment))
     className=''.join(a.title() for a in tbl_name.split('_'))
     if pkFields:
       pk = primaryKeyTpl.format(pkFields=', '.join(pkFields))
